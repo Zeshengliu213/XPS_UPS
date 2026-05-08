@@ -3,6 +3,7 @@
 # UPS 工具 UI 配色、字体与 TTK 主题
 # ============================================================
 
+import tkinter as tk
 from tkinter import ttk
 
 # ── 配色（基于 Tailwind CSS 色板，科研风）────────────────────
@@ -122,3 +123,78 @@ def apply_ttk_theme(root):
     style.map("Vertical.TScrollbar",
         background=[("active", COLORS["card_border"])],
     )
+
+
+# ── 共享 UI 组件工厂 ─────────────────────────────────────
+
+def create_button(parent, text, command, primary=False, danger=False, **kw):
+    """统一按钮工厂：primary=蓝绿主色，danger=红色，默认=灰色。"""
+    if primary:
+        bg, fg, hover = COLORS["primary"], "#ffffff", COLORS["primary_hover"]
+    elif danger:
+        bg, fg, hover = "#fef2f2", COLORS["error"], "#fee2e2"
+    else:
+        bg, fg, hover = COLORS["button_bg"], COLORS["text"], COLORS["button_hover"]
+
+    padx = kw.pop("padx", 14)
+    pady = kw.pop("pady", 6)
+
+    btn = tk.Button(parent, text=text, command=command, font=FONTS["body"],
+                    bg=bg, fg=fg, activebackground=hover, activeforeground=fg,
+                    relief="flat", cursor="hand2",
+                    borderwidth=0, highlightthickness=0,
+                    padx=padx, pady=pady, **kw)
+    btn.bind("<Enter>", lambda _e: btn.configure(bg=hover))
+    btn.bind("<Leave>", lambda _e: btn.configure(bg=bg))
+    return btn
+
+
+def create_section(parent, title, **pack_kw):
+    """创建带左侧彩条的卡片式分区。返回 inner Frame。"""
+    outer = tk.Frame(parent, bg=COLORS["card"],
+                     highlightbackground=COLORS["card_border"],
+                     highlightthickness=1)
+    outer.pack(**pack_kw)
+
+    tk.Frame(outer, bg=COLORS["primary"], width=3).pack(side="left", fill="y")
+
+    right = tk.Frame(outer, bg=COLORS["card"])
+    right.pack(side="left", fill="both", expand=True)
+
+    title_bar = tk.Frame(right, bg=COLORS["card"])
+    title_bar.pack(fill="x", padx=14, pady=(8, 4))
+    tk.Label(title_bar, text=title, font=FONTS["section"],
+             fg=COLORS["primary"], bg=COLORS["card"]).pack(side="left")
+
+    tk.Frame(right, bg=COLORS["divider"], height=1).pack(fill="x", padx=14)
+
+    inner = tk.Frame(right, bg=COLORS["card"])
+    inner.pack(fill="both", expand=True, padx=14, pady=(8, 10))
+    return inner
+
+
+def create_log_panel(parent):
+    """创建带滚动条和颜色标签的日志 Text 面板。返回 Text widget。"""
+    log_wrap = tk.Frame(parent, bg=COLORS["card"])
+    log_wrap.pack(fill="both", expand=True)
+    log_sb = ttk.Scrollbar(log_wrap, orient="vertical")
+    log_sb.pack(side="right", fill="y")
+    log = tk.Text(
+        log_wrap, height=12,
+        font=FONTS["mono"],
+        bg=COLORS["list_bg"], fg=COLORS["list_fg"],
+        relief="flat", highlightthickness=0,
+        padx=10, pady=8,
+        wrap="word",
+        yscrollcommand=log_sb.set,
+    )
+    log.pack(side="left", fill="both", expand=True)
+    log_sb.config(command=log.yview)
+
+    log.tag_configure("ok",   foreground=COLORS["success"])
+    log.tag_configure("err",  foreground=COLORS["error"])
+    log.tag_configure("warn", foreground=COLORS["warning"])
+    log.tag_configure("phi",  foreground=COLORS["primary"])
+    log.tag_configure("dim",  foreground=COLORS["secondary"])
+    log.tag_configure("bold", font=FONTS["section"])
+    return log

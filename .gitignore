@@ -8,3 +8,20 @@ env/
 .vscode/
 .idea/
 
+# Claude / AI agent session data
+.claude/
+
+# PyInstaller / build artefacts
+build/
+dist/
+*.spec
+
+# Release packages (distributed via GitHub Release)
+XPS_UPS_Release/
+XPS_UPS_Release*.zip
+XPS_UPS_软件版.zip
+
+# DL model checkpoints (~38 MB, attach to GitHub Release; see README)
+models/*.pt
+
+

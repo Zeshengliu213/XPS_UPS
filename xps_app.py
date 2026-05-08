@@ -4,27 +4,19 @@ import traceback
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from ui_theme import COLORS, FONTS, apply_ttk_theme
+from ui_theme import COLORS, FONTS, create_button, create_section, create_log_panel
 from file_loader import FileLoader
 from fit_window import FitWindow
 
 
-class XPSApp(tk.Tk):
+class XPSFrame(tk.Frame):
     """
-    XPS 模块主窗口：负责选择文件、加载谱、打开分峰拟合窗口。
+    XPS 模块主界面（可嵌入 Notebook Tab）：负责选择文件、加载谱、打开分峰拟合窗口。
     复用现有 FitWindow 的交互与拟合/导出逻辑。
     """
 
-    def __init__(self):
-        super().__init__()
-        self.title("XPS Peak Fitting")
-        self.geometry("980x680")
-        self.minsize(900, 620)
-
-        self.configure(bg=COLORS["bg"])
-        self.option_add("*Font", FONTS["body"])
-        self.option_add("*Background", COLORS["bg"])
-        apply_ttk_theme(self)
+    def __init__(self, master):
+        super().__init__(master, bg=COLORS["bg"])
 
         self.files: list[str] = []
         self.spectra: list[dict] = []
@@ -32,52 +24,6 @@ class XPSApp(tk.Tk):
 
         self._loader = FileLoader(schedule_fn=lambda fn: self.after(0, fn))
         self._build_ui()
-
-    # ------------------------------ UI helpers ------------------------------ #
-
-    def _btn(self, parent, text, command, primary=False, danger=False):
-        if primary:
-            bg, fg, hover = COLORS["primary"], "#ffffff", COLORS["primary_hover"]
-        elif danger:
-            bg, fg, hover = "#fef2f2", COLORS["error"], "#fee2e2"
-        else:
-            bg, fg, hover = COLORS["button_bg"], COLORS["text"], COLORS["button_hover"]
-
-        btn = tk.Button(
-            parent,
-            text=text,
-            command=command,
-            font=FONTS["body"],
-            bg=bg,
-            fg=fg,
-            activebackground=hover,
-            activeforeground=fg,
-            relief="flat",
-            cursor="hand2",
-            padx=14,
-            pady=6,
-            borderwidth=0,
-            highlightthickness=0,
-        )
-        btn.bind("<Enter>", lambda _e: btn.configure(bg=hover))
-        btn.bind("<Leave>", lambda _e: btn.configure(bg=bg))
-        return btn
-
-    def _section(self, parent, title, **pack_kw):
-        outer = tk.Frame(parent, bg=COLORS["card"], highlightbackground=COLORS["card_border"], highlightthickness=1)
-        outer.pack(**pack_kw)
-        tk.Frame(outer, bg=COLORS["primary"], width=3).pack(side="left", fill="y")
-        right = tk.Frame(outer, bg=COLORS["card"])
-        right.pack(side="left", fill="both", expand=True)
-        title_bar = tk.Frame(right, bg=COLORS["card"])
-        title_bar.pack(fill="x", padx=14, pady=(8, 4))
-        tk.Label(title_bar, text=title, font=FONTS["section"], fg=COLORS["primary"], bg=COLORS["card"]).pack(
-            side="left"
-        )
-        tk.Frame(right, bg=COLORS["divider"], height=1).pack(fill="x", padx=14)
-        inner = tk.Frame(right, bg=COLORS["card"])
-        inner.pack(fill="both", expand=True, padx=14, pady=(8, 10))
-        return inner
 
     # ------------------------------ UI build ------------------------------ #
 
@@ -99,25 +45,25 @@ class XPSApp(tk.Tk):
             pady=3,
         ).pack(side="left", padx=10)
 
-        file_box = self._section(self, "1) Files", fill="x", padx=20, pady=4)
+        file_box = create_section(self, "1) Files", fill="x", padx=20, pady=4)
         row = tk.Frame(file_box, bg=COLORS["card"])
         row.pack(fill="x")
-        self._btn(row, "Select .ibw files", self.pick_files, primary=True).pack(side="left")
-        self._btn(row, "Choose output folder", self.pick_out_dir).pack(side="left", padx=8)
+        create_button(row, "Select .ibw files", self.pick_files, primary=True).pack(side="left")
+        create_button(row, "Choose output folder", self.pick_out_dir).pack(side="left", padx=8)
 
         self.out_dir_var = tk.StringVar(value="Default: same folder as first IBW")
         tk.Label(row, textvariable=self.out_dir_var, fg=COLORS["secondary"], bg=COLORS["card"], font=FONTS["small"]).pack(
             side="left", padx=8
         )
 
-        act_box = self._section(self, "2) Actions", fill="x", padx=20, pady=4)
-        self._btn(act_box, "⚙  Open Peak Fitting", self.open_fit_window, primary=True).pack(side="left")
-        self._btn(act_box, "Clear list", self.clear_list, danger=True).pack(side="left", padx=8)
+        act_box = create_section(self, "2) Actions", fill="x", padx=20, pady=4)
+        create_button(act_box, "⚙  Open Peak Fitting", self.open_fit_window, primary=True).pack(side="left")
+        create_button(act_box, "Clear list", self.clear_list, danger=True).pack(side="left", padx=8)
 
         main = tk.Frame(self, bg=COLORS["bg"])
         main.pack(fill="both", expand=True, padx=20, pady=(4, 0))
 
-        left = self._section(main, "Selected Files", side="left", fill="both", expand=True)
+        left = create_section(main, "Selected Files", side="left", fill="both", expand=True)
         self.listbox = tk.Listbox(
             left,
             height=12,
@@ -135,32 +81,8 @@ class XPSApp(tk.Tk):
         sb.pack(side="left", fill="y")
         self.listbox.config(yscrollcommand=sb.set)
 
-        right = self._section(main, "Log", side="left", fill="both", expand=True, padx=(8, 0))
-        log_wrap = tk.Frame(right, bg=COLORS["card"])
-        log_wrap.pack(fill="both", expand=True)
-        log_sb = ttk.Scrollbar(log_wrap, orient="vertical")
-        log_sb.pack(side="right", fill="y")
-        self.log = tk.Text(
-            log_wrap,
-            height=12,
-            font=FONTS["mono"],
-            bg=COLORS["list_bg"],
-            fg=COLORS["list_fg"],
-            relief="flat",
-            highlightthickness=0,
-            padx=10,
-            pady=8,
-            wrap="word",
-            yscrollcommand=log_sb.set,
-        )
-        self.log.pack(side="left", fill="both", expand=True)
-        log_sb.config(command=self.log.yview)
-
-        self.log.tag_configure("ok", foreground=COLORS["success"])
-        self.log.tag_configure("err", foreground=COLORS["error"])
-        self.log.tag_configure("warn", foreground=COLORS["warning"])
-        self.log.tag_configure("dim", foreground=COLORS["secondary"])
-        self.log.tag_configure("bold", font=FONTS["section"])
+        right = create_section(main, "Log", side="left", fill="both", expand=True, padx=(8, 0))
+        self.log = create_log_panel(right)
 
     # ------------------------------ actions ------------------------------ #
 
@@ -216,4 +138,13 @@ class XPSApp(tk.Tk):
         except Exception:
             self._log("Open fit window failed:\n" + traceback.format_exc(), "err")
             messagebox.showerror("Error", "Failed to open fit window. Check Log.")
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    root.title("XPS Peak Fitting")
+    root.geometry("980x680")
+    root.minsize(900, 620)
+    XPSFrame(root).pack(fill="both", expand=True)
+    root.mainloop()
 

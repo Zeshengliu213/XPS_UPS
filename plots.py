@@ -4,6 +4,7 @@
 # ============================================================
 
 import numpy as np
+import os
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
@@ -128,6 +129,140 @@ def _draw_edge_on_ax(ax, BE_edge, aux, title="Edge", color="C2"):
         color=color,
         bbox=dict(boxstyle="round,pad=0.25", facecolor="white", alpha=0.9),
         zorder=7,
+    )
+
+
+def find_edge_two_line_fit(
+    x,
+    y_norm,
+    search_region=(2.0, -1.0),
+    bg_frac=0.22,
+    edge_frac=0.18,
+    min_pts=8,
+):
+    """
+    在给定窗口内自动选“背景区 + 上升区”，做两条直线拟合并求交点（截止边）。
+
+    选段规则（无需手动指定）：
+    - 先裁剪到 search_region，并按 x 升序排序
+    - 找 |dy/dx| 最大的点作为 edge 中心，在其附近取 edge_frac*N 个点做“上升区”
+    - 背景区从窗口两端中“平均强度更低”的那一端取 bg_frac*N 个点
+      （适配不同谱：到底是左端还是右端更像背景不预设）
+
+    返回 (x_intersect, aux)
+    aux 含：a1,b1,a2,b2,x_bg,y_bg,x_edge,y_edge,lo,hi,reason
+    """
+    lo, hi = min(search_region), max(search_region)
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y_norm, dtype=float)
+    m = (x >= lo) & (x <= hi)
+    n = int(np.sum(m))
+    if n < max(min_pts, 6):
+        return None, {"reason": f"窗口 {lo}–{hi} eV 内点数不足（{n} < {max(min_pts, 6)}）"}
+
+    xr = x[m]
+    yr = y[m]
+    idx = np.argsort(xr)
+    xr = xr[idx]
+    yr = yr[idx]
+
+    # 简单平滑一下梯度（不改变曲线形状太多）
+    if len(yr) >= 7:
+        k = 5
+        ker = np.ones(k) / k
+        ys = np.convolve(yr, ker, mode="same")
+    else:
+        ys = yr
+
+    grad = np.gradient(ys, xr)
+    i0 = int(np.argmax(np.abs(grad)))
+
+    n_bg = max(min_pts, int(round(bg_frac * n)))
+    n_edge = max(min_pts, int(round(edge_frac * n)))
+    n_bg = min(n_bg, n // 2)
+    n_edge = min(n_edge, n)
+
+    # 背景端：两端各取 n_bg 点，取平均强度更低的一端
+    left_mean = float(np.nanmean(yr[:n_bg]))
+    right_mean = float(np.nanmean(yr[-n_bg:]))
+    if left_mean <= right_mean:
+        bg_slice = slice(0, n_bg)
+    else:
+        bg_slice = slice(n - n_bg, n)
+
+    # 上升区：以最大斜率点为中心取 n_edge 点
+    half = n_edge // 2
+    i1 = max(0, i0 - half)
+    i2 = min(n, i1 + n_edge)
+    i1 = max(0, i2 - n_edge)
+    edge_slice = slice(i1, i2)
+
+    x_bg = xr[bg_slice]
+    y_bg = yr[bg_slice]
+    x_edge = xr[edge_slice]
+    y_edge = yr[edge_slice]
+
+    if len(x_bg) < 2 or len(x_edge) < 2:
+        return None, {"reason": "自动选段后点数不足，无法拟合直线"}
+
+    # 线性拟合：y = a x + b
+    a1, b1 = np.polyfit(x_bg, y_bg, 1)
+    a2, b2 = np.polyfit(x_edge, y_edge, 1)
+    denom = (a2 - a1)
+    if np.isclose(denom, 0.0):
+        return None, {"reason": "两条拟合直线斜率几乎相同，交点不稳定"}
+
+    x_int = float((b1 - b2) / denom)
+    x_int = float(np.clip(x_int, lo, hi))
+
+    aux = {
+        "a1": float(a1),
+        "b1": float(b1),
+        "a2": float(a2),
+        "b2": float(b2),
+        "x_bg": x_bg,
+        "y_bg": y_bg,
+        "x_edge": x_edge,
+        "y_edge": y_edge,
+        "lo": lo,
+        "hi": hi,
+        "reason": "ok",
+    }
+    return x_int, aux
+
+
+def _draw_two_line_fit_on_ax(ax, x_int, aux, title="Edge", color="C2"):
+    """把两条拟合线（背景/上升）和交点画在 ax 上，便于核对自动选段是否合理。"""
+    if aux is None or aux.get("reason") != "ok" or x_int is None:
+        return
+    lo, hi = aux["lo"], aux["hi"]
+    a1, b1, a2, b2 = aux["a1"], aux["b1"], aux["a2"], aux["b2"]
+
+    # 画短线段：各在线段中点附近显示
+    def _short_line(x_seg, a, b, alpha=0.85, lw=1.2):
+        if x_seg is None or len(x_seg) < 2:
+            return
+        x0 = float(np.nanmin(x_seg))
+        x1 = float(np.nanmax(x_seg))
+        xs = np.linspace(x0, x1, 30)
+        ys = a * xs + b
+        ax.plot(xs, ys, color=color, lw=lw, alpha=alpha, zorder=6)
+
+    _short_line(aux.get("x_bg"), a1, b1, alpha=0.65, lw=1.0)
+    _short_line(aux.get("x_edge"), a2, b2, alpha=0.9, lw=1.2)
+
+    ax.axvline(x_int, color=color, linestyle=":", linewidth=1.1, alpha=0.9, zorder=7)
+    ax.text(
+        x_int,
+        0.98,
+        f"{title} = {x_int:.2f} eV",
+        transform=ax.get_xaxis_transform(),
+        ha="center",
+        va="top",
+        fontsize=9,
+        color=color,
+        bbox=dict(boxstyle="round,pad=0.25", facecolor="white", alpha=0.9),
+        zorder=8,
     )
 
 
@@ -285,6 +420,147 @@ def plot_overlay(spectra, zoom_enable=True, zoomA=(18.0, 15.0), zoomB=(-1.0, 2.0
     return fig
 
 
+def _slice_and_renorm(x, y, lo, hi):
+    """裁剪并局部归一化到 0–1，按 UPS 惯例 x 从高到低排序。"""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    m = (x >= lo) & (x <= hi)
+    if not np.any(m):
+        return None, None
+    xs = x[m]
+    ys = y[m]
+    y0 = float(np.nanmin(ys))
+    y1 = float(np.nanmax(ys))
+    if (y1 - y0) > 0:
+        yn = (ys - y0) / (y1 - y0)
+    else:
+        yn = ys * 0.0
+    idx = np.argsort(xs)[::-1]
+    return xs[idx], yn[idx]
+
+
+def plot_preview_two_regions_overlay(
+    spectra,
+    region_seco=(18.0, 15.0),
+    region_ef=(2.0, -1.0),
+    annotate_edges=True,
+):
+    """
+    Preview-only figure: show ONLY two regions side-by-side (1×2).
+    - Left: SECO region (default 18–15 eV)
+    - Right: EF region (default 2–-1 eV)
+    No full-spectrum panel.
+    """
+    loA, hiA = min(region_seco), max(region_seco)
+    loB, hiB = min(region_ef), max(region_ef)
+
+    fig, (ax_a, ax_b) = plt.subplots(1, 2, figsize=(10.6, 4.2), dpi=150)
+
+    colors = plt.cm.tab10(np.linspace(0, 1, max(len(spectra), 1)))
+    for i, s in enumerate(spectra):
+        c = colors[i % 10]
+        xA, yA = _slice_and_renorm(s["x"], s["y_norm"], loA, hiA)
+        xB, yB = _slice_and_renorm(s["x"], s["y_norm"], loB, hiB)
+        if xA is not None:
+            ax_a.plot(xA, yA, lw=1.5, label=s["base"], color=c)
+        if xB is not None:
+            ax_b.plot(xB, yB, lw=1.5, label=s["base"], color=c)
+
+        if annotate_edges:
+            # SECO: keep tangent-based cutoff on locally renormalized trace
+            if xA is not None:
+                # find_seco expects x ascending; feed sorted ascending slice
+                xa = np.asarray(xA)[::-1]
+                ya = np.asarray(yA)[::-1]
+                BE_cut, _phi, aux = find_seco(xa, ya, search_region=(loA, hiA), hv=HV_HEI, min_slope=0.05)
+                if BE_cut is not None and aux and aux.get("reason") == "ok":
+                    _draw_edge_on_ax(ax_a, BE_cut, aux, title="SECO", color=c)
+
+            # EF: auto background + rising region, two-line fit intersection
+            if xB is not None:
+                xb = np.asarray(xB)[::-1]
+                yb = np.asarray(yB)[::-1]
+                x_int, aux2 = find_edge_two_line_fit(xb, yb, search_region=(loB, hiB))
+                if x_int is not None and aux2 and aux2.get("reason") == "ok":
+                    _draw_two_line_fit_on_ax(ax_b, x_int, aux2, title="EF", color=c)
+
+    ax_a.set_xlim(hiA, loA)
+    ax_a.set_title(f"SECO  {hiA:g}–{loA:g} eV", fontsize=11)
+    ax_a.set_xlabel("Binding Energy (eV)")
+    ax_a.set_ylabel("Local-normalized Intensity (0–1)")
+    ax_a.grid(alpha=0.25)
+
+    ax_b.set_xlim(hiB, loB)
+    ax_b.set_title(f"EF  {hiB:g}–{loB:g} eV", fontsize=11)
+    ax_b.set_xlabel("Binding Energy (eV)")
+    ax_b.grid(alpha=0.25)
+
+    ax_a.set_ylim(-0.03, 1.03)
+    ax_b.set_ylim(-0.03, 1.03)
+
+    ax_a.legend(frameon=False, fontsize=8, loc="best")
+    fig.tight_layout()
+    return fig
+
+
+def plot_preview_two_regions_separate(
+    spectra,
+    region_seco=(18.0, 15.0),
+    region_ef=(2.0, -1.0),
+    annotate_edges=True,
+):
+    """
+    Per-file preview: each spectrum gets a 1×2 figure with only two regions.
+    Returns list of (base, fig).
+    """
+    loA, hiA = min(region_seco), max(region_seco)
+    loB, hiB = min(region_ef), max(region_ef)
+    figs = []
+
+    for s in spectra:
+        fig, (ax_a, ax_b) = plt.subplots(1, 2, figsize=(10.2, 4.2), dpi=150)
+        xA, yA = _slice_and_renorm(s["x"], s["y_norm"], loA, hiA)
+        xB, yB = _slice_and_renorm(s["x"], s["y_norm"], loB, hiB)
+        if xA is not None:
+            ax_a.plot(xA, yA, lw=1.8, color="C0")
+        if xB is not None:
+            ax_b.plot(xB, yB, lw=1.8, color="C0")
+
+        ax_a.set_xlim(hiA, loA)
+        ax_a.set_title(f"{s['base']}  ·  SECO {hiA:g}–{loA:g} eV", fontsize=11)
+        ax_a.set_xlabel("Binding Energy (eV)")
+        ax_a.set_ylabel("Local-normalized Intensity (0–1)")
+        ax_a.grid(alpha=0.25)
+
+        ax_b.set_xlim(hiB, loB)
+        ax_b.set_title(f"EF {hiB:g}–{loB:g} eV", fontsize=11)
+        ax_b.set_xlabel("Binding Energy (eV)")
+        ax_b.grid(alpha=0.25)
+
+        ax_a.set_ylim(-0.03, 1.03)
+        ax_b.set_ylim(-0.03, 1.03)
+
+        if annotate_edges:
+            if xA is not None:
+                xa = np.asarray(xA)[::-1]
+                ya = np.asarray(yA)[::-1]
+                BE_cut, _phi, aux = find_seco(xa, ya, search_region=(loA, hiA), hv=HV_HEI, min_slope=0.05)
+                if BE_cut is not None and aux and aux.get("reason") == "ok":
+                    _draw_edge_on_ax(ax_a, BE_cut, aux, title="SECO", color="C1")
+
+            if xB is not None:
+                xb = np.asarray(xB)[::-1]
+                yb = np.asarray(yB)[::-1]
+                x_int, aux2 = find_edge_two_line_fit(xb, yb, search_region=(loB, hiB))
+                if x_int is not None and aux2 and aux2.get("reason") == "ok":
+                    _draw_two_line_fit_on_ax(ax_b, x_int, aux2, title="EF", color="C2")
+
+        fig.tight_layout()
+        figs.append((s["base"], fig))
+
+    return figs
+
+
 def plot_separate(spectra, zoom_enable=True, zoomA=(18.0, 15.0), zoomB=(-1.0, 2.0)):
     """
     每条谱一张图。zoom_enable 为 True 时每张图 3 面板：左全谱，右上 18–15 eV，右下 -1–2 eV；否则仅主图。
@@ -348,11 +624,24 @@ def plot_separate(spectra, zoom_enable=True, zoomA=(18.0, 15.0), zoomB=(-1.0, 2.
     return figs
 
 
-def save_png(fig, path):
-    """保存图为 PNG 并关闭 figure。"""
-    fig.savefig(path, dpi=300, bbox_inches="tight")
+def save_figure(fig, path):
+    """
+    保存图并关闭 figure。
+    - PNG：300 dpi
+    - SVG/PDF：矢量导出
+    """
+    ext = os.path.splitext(str(path))[-1].lower()
+    if ext == ".png":
+        fig.savefig(path, dpi=300, bbox_inches="tight")
+    else:
+        fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
     return path
+
+
+def save_png(fig, path):
+    """兼容旧接口：保存 PNG 并关闭 figure。"""
+    return save_figure(fig, path)
 
 
 def plot_homo_stitched(s, zoomA=(18.0, 15.0), homo_range=(0.0, 5.0), hv=HV_HEI):

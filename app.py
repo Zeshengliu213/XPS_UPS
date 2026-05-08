@@ -14,13 +14,12 @@ import numpy as np
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from reader import read_ibw_ups
 from export_csv import (
     export_csv_separate,
     export_csv_merged_horizontal,
     get_scan_range_tag,
 )
-from ui_theme import COLORS, FONTS, apply_ttk_theme
+from ui_theme import COLORS, FONTS, create_button, create_section, create_log_panel
 from file_loader import FileLoader
 from fit_window import FitWindow
 
@@ -31,19 +30,9 @@ except ImportError:
     HAS_WINDND = False
 
 
-class UPSApp(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title("XPS / UPS IBW Processor")
-        self.geometry("1020x700")
-        self.minsize(960, 660)
-
-        self.configure(bg=COLORS["bg"])
-        self.option_add("*Font", FONTS["body"])
-        self.option_add("*Background", COLORS["bg"])
-
-        # Apply TTK styles globally
-        apply_ttk_theme(self)
+class UPSFrame(tk.Frame):
+    def __init__(self, master):
+        super().__init__(master, bg=COLORS["bg"])
 
         self.files = []
         self.spectra = []
@@ -60,55 +49,6 @@ class UPSApp(tk.Tk):
     # ------------------------------------------------------------------ #
     #  Styled widget helpers                                               #
     # ------------------------------------------------------------------ #
-
-    def _btn(self, parent, text, command, width=0, primary=False, danger=False):
-        """统一按钮工厂：primary=蓝绿主色，danger=红色，默认=灰色。"""
-        if primary:
-            bg, fg, hover = COLORS["primary"], "#ffffff", COLORS["primary_hover"]
-        elif danger:
-            bg, fg, hover = "#fef2f2", COLORS["error"], "#fee2e2"
-        else:
-            bg, fg, hover = COLORS["button_bg"], COLORS["text"], COLORS["button_hover"]
-
-        kw = dict(font=FONTS["body"], bg=bg, fg=fg,
-                  activebackground=hover, activeforeground=fg,
-                  relief="flat", cursor="hand2",
-                  padx=14, pady=6, borderwidth=0, highlightthickness=0)
-        if width:
-            kw["width"] = width
-
-        btn = tk.Button(parent, text=text, command=command, **kw)
-        btn.bind("<Enter>", lambda _e: btn.configure(bg=hover))
-        btn.bind("<Leave>", lambda _e: btn.configure(bg=bg))
-        return btn
-
-    def _section(self, parent, title, **pack_kw):
-        """
-        创建带左侧彩条的卡片式分区。
-        返回 inner Frame（内部可自由使用 pack 或 grid）。
-        """
-        outer = tk.Frame(parent, bg=COLORS["card"],
-                         highlightbackground=COLORS["card_border"],
-                         highlightthickness=1)
-        outer.pack(**pack_kw)
-
-        # 3px 主色左边框
-        tk.Frame(outer, bg=COLORS["primary"], width=3).pack(side="left", fill="y")
-
-        # 右侧：标题栏 + 内容
-        right = tk.Frame(outer, bg=COLORS["card"])
-        right.pack(side="left", fill="both", expand=True)
-
-        title_bar = tk.Frame(right, bg=COLORS["card"])
-        title_bar.pack(fill="x", padx=14, pady=(8, 4))
-        tk.Label(title_bar, text=title, font=FONTS["section"],
-                 fg=COLORS["primary"], bg=COLORS["card"]).pack(side="left")
-
-        tk.Frame(right, bg=COLORS["divider"], height=1).pack(fill="x", padx=14)
-
-        inner = tk.Frame(right, bg=COLORS["card"])
-        inner.pack(fill="both", expand=True, padx=14, pady=(8, 10))
-        return inner
 
     def _opt_label(self, parent, text, row):
         tk.Label(parent, text=text, bg=COLORS["card"],
@@ -186,152 +126,36 @@ class UPSApp(tk.Tk):
                      fg=fg, bg=bg, padx=8, pady=3,
                      ).pack(side="left", padx=4)
 
-        # ── 1) Files ──────────────────────────────────────────────────
-        file_box = self._section(self, "1)  Files",
-                                 fill="x", padx=20, pady=4)
-
-        row = tk.Frame(file_box, bg=COLORS["card"])
-        row.pack(fill="x")
-        self._btn(row, "Select .ibw files", self.pick_files,
-                  primary=True).pack(side="left")
-        self._btn(row, "Choose output folder", self.pick_out_dir,
-                  ).pack(side="left", padx=8)
-
-        self.out_dir_var = tk.StringVar(value="Default: same folder as first IBW")
-        tk.Label(row, textvariable=self.out_dir_var,
-                 fg=COLORS["secondary"], bg=COLORS["card"],
-                 font=FONTS["small"]).pack(side="left", padx=8)
-
-        row2 = tk.Frame(file_box, bg=COLORS["card"])
-        row2.pack(fill="x", pady=(6, 0))
-        self._btn(row2, "Remove selected", self.remove_selected,
-                  ).pack(side="left")
-        self._btn(row2, "Clear list", self.clear_list,
-                  danger=True).pack(side="left", padx=8)
-
-        tk.Label(file_box,
-                 text="Tip: Drag & drop .ibw files directly onto the window to add them.",
-                 fg=COLORS["secondary"], bg=COLORS["card"],
-                 font=FONTS["small"]).pack(anchor="w", pady=(8, 0))
-
-        # ── 2) Options ────────────────────────────────────────────────
-        opt_box = self._section(self, "2)  Options",
-                                fill="x", padx=20, pady=4)
-
-        self.plot_mode = tk.StringVar(value="overlay")
-        self._opt_label(opt_box, "Plot mode:", 0)
-        self._opt_radio(opt_box, "Overlay (one figure)",  self.plot_mode, "overlay",   0, 1)
-        self._opt_radio(opt_box, "Separate (per file)",   self.plot_mode, "separate",  0, 2)
-
-        self.export_mode = tk.StringVar(value="separate_csv")
-        self._opt_label(opt_box, "CSV export:", 1)
-        self._opt_radio(opt_box, "Separate CSV per file",    self.export_mode, "separate_csv",        1, 1)
-        self._opt_radio(opt_box, "Merged CSV (horizontal)",  self.export_mode, "merged_horizontal",   1, 2)
-
-        self.save_png_var = tk.BooleanVar(value=True)
-        self._opt_check(opt_box, "Export PNG figures", self.save_png_var, 2, 1)
-
-        self.save_homo_png_var = tk.BooleanVar(value=False)
-        # 放在单独一行，避免被窗口宽度挤掉看不见
-        self._opt_check(opt_box, "Export HOMO stitched PNG (EF + SECO)", self.save_homo_png_var, 5, 1)
-
-        self.zoom_enable = tk.BooleanVar(value=True)
-        self.zoom_check_btn = self._opt_check(
-            opt_box, "Add two zoom panels", self.zoom_enable, 2, 3)
-
-        # Zoom range entries
-        tk.Label(opt_box, text="Zoom A (eV):", bg=COLORS["card"],
-                 fg=COLORS["text"], font=FONTS["body"],
-                 ).grid(row=3, column=0, sticky="w", padx=(0, 8), pady=3)
-        self.zoom_a_lo_var = tk.StringVar(value="18")
-        self.zoom_a_hi_var = tk.StringVar(value="15")
-        self._zoom_entry(opt_box, self.zoom_a_lo_var, 3, 1)
-        tk.Label(opt_box, text="–", bg=COLORS["card"],
-                 fg=COLORS["secondary"], font=FONTS["body"],
-                 ).grid(row=3, column=2, sticky="w", padx=2, pady=3)
-        self._zoom_entry(opt_box, self.zoom_a_hi_var, 3, 3)
-
-        tk.Label(opt_box, text="Zoom B (eV):", bg=COLORS["card"],
-                 fg=COLORS["text"], font=FONTS["body"],
-                 ).grid(row=4, column=0, sticky="w", padx=(0, 8), pady=3)
-        self.zoom_b_lo_var = tk.StringVar(value="-1")
-        # 费米边默认用 -1~3 eV
-        self.zoom_b_hi_var = tk.StringVar(value="3")
-        self._zoom_entry(opt_box, self.zoom_b_lo_var, 4, 1)
-        tk.Label(opt_box, text="–", bg=COLORS["card"],
-                 fg=COLORS["secondary"], font=FONTS["body"],
-                 ).grid(row=4, column=2, sticky="w", padx=2, pady=3)
-        self._zoom_entry(opt_box, self.zoom_b_hi_var, 4, 3)
-
-        self.zoom_hint_label = tk.Label(
-            opt_box,
-            text="Zoom A: SECO region  ·  Zoom B: near EF  ·  Available when spectrum starts ≥ 20 eV",
-            fg=COLORS["secondary"], bg=COLORS["card"],
-            font=FONTS["small"], justify="left",
-        )
-        self.zoom_hint_label.grid(row=6, column=0, columnspan=4,
-                                  sticky="w", padx=0, pady=(4, 0))
-        self.zoom_check_btn.grid_remove()
-        self.zoom_hint_label.grid_remove()
-
-        # ── 3) Actions ────────────────────────────────────────────────
-        act_box = self._section(self, "3)  Actions",
-                                fill="x", padx=20, pady=4)
-
-        self._btn(act_box, "▶  Preview",        self.preview,         primary=True ).pack(side="left")
-        self._btn(act_box, "⬇  Export CSV + PNG", self.export,                     ).pack(side="left", padx=8)
-        # XPS 功能已拆分为独立模块，入口留在启动页
-        self._btn(act_box, "⚙  XPS Peak Fitting (open module)", self._open_xps_module,            ).pack(side="left")
-
-        # ── Main area: file list + log ────────────────────────────────
+        # ── Main area: 3-step wizard + log ─────────────────────────────
         main = tk.Frame(self, bg=COLORS["bg"])
         main.pack(fill="both", expand=True, padx=20, pady=(4, 0))
 
-        # File list
-        left = self._section(main, "Selected Files",
+        left = create_section(main, "UPS Workflow",
                              side="left", fill="both", expand=True)
-        self.listbox = tk.Listbox(
-            left, height=12,
-            font=FONTS["body"],
-            bg=COLORS["list_bg"], fg=COLORS["list_fg"],
-            selectbackground=COLORS["list_select"],
-            selectforeground=COLORS["text"],
-            relief="flat", highlightthickness=0,
-            activestyle="none",
-        )
-        self.listbox.pack(side="left", fill="both", expand=True)
-        lb_sb = ttk.Scrollbar(left, orient="vertical",
-                              command=self.listbox.yview)
-        lb_sb.pack(side="left", fill="y")
-        self.listbox.config(yscrollcommand=lb_sb.set)
 
-        # Log panel
-        right = self._section(main, "Log",
-                              side="left", fill="both", expand=True,
-                              padx=(8, 0))
-        log_wrap = tk.Frame(right, bg=COLORS["card"])
-        log_wrap.pack(fill="both", expand=True)
-        log_sb = ttk.Scrollbar(log_wrap, orient="vertical")
-        log_sb.pack(side="right", fill="y")
-        self.log = tk.Text(
-            log_wrap, height=12,
-            font=FONTS["mono"],
-            bg=COLORS["list_bg"], fg=COLORS["list_fg"],
-            relief="flat", highlightthickness=0,
-            padx=10, pady=8,
-            wrap="word",
-            yscrollcommand=log_sb.set,
-        )
-        self.log.pack(side="left", fill="both", expand=True)
-        log_sb.config(command=self.log.yview)
+        self.steps_nb = ttk.Notebook(left)
+        self.steps_nb.pack(fill="both", expand=True)
 
-        # Log color tags
-        self.log.tag_configure("ok",      foreground=COLORS["success"])
-        self.log.tag_configure("err",     foreground=COLORS["error"])
-        self.log.tag_configure("warn",    foreground=COLORS["warning"])
-        self.log.tag_configure("phi",     foreground=COLORS["primary"])
-        self.log.tag_configure("dim",     foreground=COLORS["secondary"])
-        self.log.tag_configure("bold",    font=FONTS["section"])
+        self.step_files = tk.Frame(self.steps_nb, bg=COLORS["card"])
+        self.step_preview = tk.Frame(self.steps_nb, bg=COLORS["card"])
+        self.step_export = tk.Frame(self.steps_nb, bg=COLORS["card"])
+
+        self.steps_nb.add(self.step_files, text="1) Files")
+        self.steps_nb.add(self.step_preview, text="2) Preview")
+        self.steps_nb.add(self.step_export, text="3) Export")
+
+        # Build step pages
+        self._build_step_files(self.step_files)
+        self._build_step_preview(self.step_preview)
+        self._build_step_export(self.step_export)
+
+        # Disable steps until spectra loaded
+        self._set_steps_enabled(loaded=False)
+
+        # Log panel (always visible)
+        right = create_section(main, "Log",
+                              side="left", fill="both", expand=True, padx=(8, 0))
+        self.log = create_log_panel(right)
 
         # ── Status bar ────────────────────────────────────────────────
         status_frame = tk.Frame(self, bg=COLORS["card"],
@@ -355,6 +179,140 @@ class UPSApp(tk.Tk):
 
         self._log("Ready — select or drag & drop .ibw files to begin.", "dim")
 
+    def _build_step_files(self, parent):
+        """Step 1: choose files and show list."""
+        top = tk.Frame(parent, bg=COLORS["card"])
+        top.pack(fill="x", padx=10, pady=10)
+        create_button(top, "Select .ibw files", self.pick_files, primary=True).pack(side="left")
+        create_button(top, "Choose output folder", self.pick_out_dir).pack(side="left", padx=8)
+
+        self.out_dir_var = tk.StringVar(value="Default: same folder as first IBW")
+        tk.Label(top, textvariable=self.out_dir_var, fg=COLORS["secondary"], bg=COLORS["card"],
+                 font=FONTS["small"]).pack(side="left", padx=8)
+
+        mid = tk.Frame(parent, bg=COLORS["card"])
+        mid.pack(fill="x", padx=10, pady=(0, 6))
+        create_button(mid, "Remove selected", self.remove_selected).pack(side="left")
+        create_button(mid, "Clear list", self.clear_list, danger=True).pack(side="left", padx=8)
+
+        tk.Label(parent,
+                 text="Tip: Drag & drop .ibw files onto the window to add them.",
+                 fg=COLORS["secondary"], bg=COLORS["card"], font=FONTS["small"]).pack(
+            anchor="w", padx=10, pady=(0, 6)
+        )
+
+        box = tk.Frame(parent, bg=COLORS["card"])
+        box.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.listbox = tk.Listbox(
+            box, height=12,
+            font=FONTS["body"],
+            bg=COLORS["list_bg"], fg=COLORS["list_fg"],
+            selectbackground=COLORS["list_select"], selectforeground=COLORS["text"],
+            relief="flat", highlightthickness=0, activestyle="none",
+        )
+        self.listbox.pack(side="left", fill="both", expand=True)
+        sb = ttk.Scrollbar(box, orient="vertical", command=self.listbox.yview)
+        sb.pack(side="left", fill="y")
+        self.listbox.config(yscrollcommand=sb.set)
+
+    def _build_step_preview(self, parent):
+        """Step 2: plotting options + preview."""
+        opt = tk.Frame(parent, bg=COLORS["card"])
+        opt.pack(fill="x", padx=10, pady=10)
+
+        self.plot_mode = tk.StringVar(value="overlay")
+        self._opt_label(opt, "Plot mode:", 0)
+        self._opt_radio(opt, "Overlay (one figure)", self.plot_mode, "overlay", 0, 1)
+        self._opt_radio(opt, "Separate (per file)", self.plot_mode, "separate", 0, 2)
+
+        self.save_homo_png_var = tk.BooleanVar(value=False)
+        self._opt_check(opt, "Preview HOMO stitched (EF + SECO)", self.save_homo_png_var, 1, 1)
+
+        self.zoom_enable = tk.BooleanVar(value=True)
+        self.zoom_check_btn = self._opt_check(opt, "Add two zoom panels", self.zoom_enable, 1, 2)
+
+        # Zoom range entries
+        tk.Label(opt, text="Zoom A (eV):", bg=COLORS["card"], fg=COLORS["text"], font=FONTS["body"]).grid(
+            row=2, column=0, sticky="w", padx=(0, 8), pady=3
+        )
+        self.zoom_a_lo_var = tk.StringVar(value="18")
+        self.zoom_a_hi_var = tk.StringVar(value="15")
+        self._zoom_entry(opt, self.zoom_a_lo_var, 2, 1)
+        tk.Label(opt, text="–", bg=COLORS["card"], fg=COLORS["secondary"], font=FONTS["body"]).grid(
+            row=2, column=2, sticky="w", padx=2, pady=3
+        )
+        self._zoom_entry(opt, self.zoom_a_hi_var, 2, 3)
+
+        tk.Label(opt, text="Zoom B (eV):", bg=COLORS["card"], fg=COLORS["text"], font=FONTS["body"]).grid(
+            row=3, column=0, sticky="w", padx=(0, 8), pady=3
+        )
+        self.zoom_b_lo_var = tk.StringVar(value="-1")
+        self.zoom_b_hi_var = tk.StringVar(value="3")
+        self._zoom_entry(opt, self.zoom_b_lo_var, 3, 1)
+        tk.Label(opt, text="–", bg=COLORS["card"], fg=COLORS["secondary"], font=FONTS["body"]).grid(
+            row=3, column=2, sticky="w", padx=2, pady=3
+        )
+        self._zoom_entry(opt, self.zoom_b_hi_var, 3, 3)
+
+        self.zoom_hint_label = tk.Label(
+            opt,
+            text="Zoom A: SECO region  ·  Zoom B: near EF  ·  Available when spectrum starts ≥ 20 eV",
+            fg=COLORS["secondary"], bg=COLORS["card"], font=FONTS["small"], justify="left",
+        )
+        self.zoom_hint_label.grid(row=4, column=0, columnspan=4, sticky="w", padx=0, pady=(4, 0))
+        self.zoom_check_btn.grid_remove()
+        self.zoom_hint_label.grid_remove()
+
+        act = tk.Frame(parent, bg=COLORS["card"])
+        act.pack(fill="x", padx=10, pady=(0, 10))
+        self.preview_btn = create_button(act, "▶  Preview", self.preview, primary=True)
+        self.preview_btn.pack(side="left")
+        tk.Label(act, text="(opens matplotlib windows)", fg=COLORS["secondary"], bg=COLORS["card"],
+                 font=FONTS["small"]).pack(side="left", padx=10)
+
+    def _build_step_export(self, parent):
+        """Step 3: export options + export."""
+        opt = tk.Frame(parent, bg=COLORS["card"])
+        opt.pack(fill="x", padx=10, pady=10)
+
+        self.export_mode = tk.StringVar(value="separate_csv")
+        self._opt_label(opt, "CSV export:", 0)
+        self._opt_radio(opt, "Separate CSV per file", self.export_mode, "separate_csv", 0, 1)
+        self._opt_radio(opt, "Merged CSV (horizontal)", self.export_mode, "merged_horizontal", 0, 2)
+
+        self.save_png_var = tk.BooleanVar(value=True)
+        self._opt_check(opt, "Export PNG figures", self.save_png_var, 1, 1)
+        self.save_svg_var = tk.BooleanVar(value=False)
+        self._opt_check(opt, "Export SVG figures", self.save_svg_var, 1, 2)
+
+        self.export_homo_var = tk.BooleanVar(value=False)
+        self._opt_check(opt, "Export HOMO stitched PNG (EF + SECO)", self.export_homo_var, 2, 1)
+
+        act = tk.Frame(parent, bg=COLORS["card"])
+        act.pack(fill="x", padx=10, pady=(0, 10))
+        self.export_btn = create_button(act, "⬇  Export", self.export, primary=True)
+        self.export_btn.pack(side="left")
+        tk.Label(act, text="(CSV + figures)", fg=COLORS["secondary"], bg=COLORS["card"],
+                 font=FONTS["small"]).pack(side="left", padx=10)
+
+    def _set_steps_enabled(self, loaded: bool):
+        """Enable/disable Preview & Export steps depending on load state."""
+        state = "normal" if loaded else "disabled"
+        try:
+            self.steps_nb.tab(1, state=state)  # Preview
+            self.steps_nb.tab(2, state=state)  # Export
+        except Exception:
+            pass
+        if hasattr(self, "preview_btn"):
+            self.preview_btn.configure(state=("normal" if loaded else "disabled"))
+        if hasattr(self, "export_btn"):
+            self.export_btn.configure(state=("normal" if loaded else "disabled"))
+        if not loaded:
+            try:
+                self.steps_nb.select(0)
+            except Exception:
+                pass
+
     # ------------------------------------------------------------------ #
     #  Zoom helpers                                                        #
     # ------------------------------------------------------------------ #
@@ -366,9 +324,11 @@ class UPSApp(tk.Tk):
 
     def _update_zoom_ui(self):
         if self._spectra_start_from_20ev():
-            self.zoom_check_btn.grid(row=2, column=2, sticky="w", padx=8, pady=4)
-            self.zoom_hint_label.grid(row=5, column=0, columnspan=4,
-                                      sticky="w", padx=0, pady=(4, 0))
+            # In Step 2 (Preview) grid:
+            # - zoom_check_btn is at row=1
+            # - zoom_hint_label is at row=4
+            self.zoom_check_btn.grid(row=1, column=2, sticky="w", padx=8, pady=4)
+            self.zoom_hint_label.grid(row=4, column=0, columnspan=4, sticky="w", padx=0, pady=(4, 0))
         else:
             self.zoom_check_btn.grid_remove()
             self.zoom_hint_label.grid_remove()
@@ -397,7 +357,7 @@ class UPSApp(tk.Tk):
     def _setup_drag_drop(self):
         if HAS_WINDND:
             try:
-                windnd.hook_dropfiles(self, func=self._on_drop_files)
+                windnd.hook_dropfiles(self.winfo_toplevel(), func=self._on_drop_files)
             except Exception:
                 pass
 
@@ -408,9 +368,9 @@ class UPSApp(tk.Tk):
         for p in paths:
             if isinstance(p, bytes):
                 try:
-                    p = p.decode("utf-8")
-                except UnicodeDecodeError:
-                    p = p.decode("gbk", errors="ignore")
+                    p = os.fsdecode(p)
+                except (UnicodeDecodeError, TypeError):
+                    p = p.decode("utf-8", errors="replace")
             if p and p.lower().endswith(".ibw"):
                 decoded.append(p)
         if decoded:
@@ -459,6 +419,7 @@ class UPSApp(tk.Tk):
             self.spectra = []
             self.out_dir_var.set("Default: same folder as first IBW")
             self._update_zoom_ui()
+            self._set_steps_enabled(loaded=False)
             self._log("List cleared.", "dim")
             return
         self._log(f"Reloading {len(self.files)} file(s)…", "dim")
@@ -472,6 +433,7 @@ class UPSApp(tk.Tk):
         self.out_dir_var.set("Default: same folder as first IBW")
         self._set_status("Ready")
         self._update_zoom_ui()
+        self._set_steps_enabled(loaded=False)
         self._log("List cleared.", "dim")
 
     def pick_files(self):
@@ -511,6 +473,7 @@ class UPSApp(tk.Tk):
         tag = "ok" if bad == 0 else "warn"
         self._log(f"Loaded {ok} spectrum{'s' if ok != 1 else ''}   Failed {bad}", tag)
         self._update_zoom_ui()
+        self._set_steps_enabled(loaded=(ok > 0))
 
     # ------------------------------------------------------------------ #
     #  Guard / helpers                                                     #
@@ -570,18 +533,33 @@ class UPSApp(tk.Tk):
             import matplotlib
             matplotlib.use("TkAgg")
             import matplotlib.pyplot as plt
-            from plots import plot_overlay, plot_separate, plot_homo_stitched, HV_HEI
+            from plots import (
+                plot_preview_two_regions_overlay,
+                plot_preview_two_regions_separate,
+                plot_homo_stitched,
+                HV_HEI,
+            )
 
             z = self._zoom_effective()
             zA, zB = self._get_zoom_ranges()
             if self.plot_mode.get() == "overlay":
-                fig = plot_overlay(self.spectra, zoom_enable=z, zoomA=zA, zoomB=zB)
-                fig.canvas.manager.set_window_title("UPS Overlay")
+                fig = plot_preview_two_regions_overlay(
+                    self.spectra,
+                    region_seco=zA,
+                    region_ef=zB,
+                    annotate_edges=z,
+                )
+                fig.canvas.manager.set_window_title("UPS Preview (SECO + EF)")
                 plt.show()
             else:
-                figs = plot_separate(self.spectra, zoom_enable=z, zoomA=zA, zoomB=zB)
+                figs = plot_preview_two_regions_separate(
+                    self.spectra,
+                    region_seco=zA,
+                    region_ef=zB,
+                    annotate_edges=z,
+                )
                 for base, fig in figs:
-                    fig.canvas.manager.set_window_title(base)
+                    fig.canvas.manager.set_window_title(f"{base} · Preview (SECO + EF)")
                 plt.show()
 
             # 额外预览：HOMO stitched 图（与导出同一个勾选项）
@@ -606,7 +584,7 @@ class UPSApp(tk.Tk):
         out_dir = self.get_out_dir()
         os.makedirs(out_dir, exist_ok=True)
         try:
-            from plots import plot_overlay, plot_separate, plot_homo_stitched, save_png, HV_HEI
+            from plots import plot_overlay, plot_separate, plot_homo_stitched, save_figure, HV_HEI
 
             if self.export_mode.get() == "separate_csv":
                 paths = export_csv_separate(self.spectra, out_dir)
@@ -618,28 +596,46 @@ class UPSApp(tk.Tk):
             z = self._zoom_effective()
             zA, zB = self._get_zoom_ranges()
 
-            if self.save_png_var.get():
+            if self.save_png_var.get() or self.save_svg_var.get():
                 if self.plot_mode.get() == "overlay":
                     fig = plot_overlay(self.spectra, zoom_enable=z, zoomA=zA, zoomB=zB)
                     tag = get_scan_range_tag(self.spectra[0])
-                    png = os.path.join(out_dir, f"UPS_overlay_{tag}.png")
-                    save_png(fig, png)
-                    self._log(f"PNG  →  {png}", "ok")
+                    if self.save_png_var.get():
+                        png = os.path.join(out_dir, f"UPS_overlay_{tag}.png")
+                        save_figure(fig, png)
+                        self._log(f"PNG  →  {png}", "ok")
+                        fig = None
+                    if self.save_svg_var.get():
+                        if fig is None:
+                            fig = plot_overlay(self.spectra, zoom_enable=z, zoomA=zA, zoomB=zB)
+                        svg = os.path.join(out_dir, f"UPS_overlay_{tag}.svg")
+                        save_figure(fig, svg)
+                        self._log(f"SVG  →  {svg}", "ok")
                 else:
                     figs = plot_separate(self.spectra, zoom_enable=z, zoomA=zA, zoomB=zB)
                     for (base, fig), s in zip(figs, self.spectra):
                         tag = get_scan_range_tag(s)
-                        png = os.path.join(out_dir, f"{base}_{tag}.png")
-                        save_png(fig, png)
-                    self._log(f"PNG: {len(figs)} figure(s)  →  {out_dir}", "ok")
+                        if self.save_png_var.get():
+                            png = os.path.join(out_dir, f"{base}_{tag}.png")
+                            save_figure(fig, png)
+                            self._log(f"PNG  →  {png}", "ok")
+                            fig = None
+                        if self.save_svg_var.get():
+                            if fig is None:
+                                # 重新生成一次（上面保存会 close figure）
+                                fig2s = plot_separate([s], zoom_enable=z, zoomA=zA, zoomB=zB)
+                                _, fig = fig2s[0]
+                            svg = os.path.join(out_dir, f"{base}_{tag}.svg")
+                            save_figure(fig, svg)
+                            self._log(f"SVG  →  {svg}", "ok")
 
             # HOMO stitched readout figure (always per spectrum)
-            if self.save_homo_png_var.get():
+            if self.export_homo_var.get():
                 for s in self.spectra:
                     fig = plot_homo_stitched(s, zoomA=zA, homo_range=(-1.0, 5.0), hv=HV_HEI)
                     tag = get_scan_range_tag(s)
                     png = os.path.join(out_dir, f"{s['base']}_HOMO_{tag}.png")
-                    save_png(fig, png)
+                    save_figure(fig, png)
                 self._log(f"HOMO PNG: {len(self.spectra)} figure(s)  →  {out_dir}", "ok")
 
             if z:
@@ -658,7 +654,12 @@ class UPSApp(tk.Tk):
 
 if __name__ == "__main__":
     try:
-        UPSApp().mainloop()
+        root = tk.Tk()
+        root.title("XPS / UPS IBW Processor")
+        root.geometry("1020x700")
+        root.minsize(960, 660)
+        UPSFrame(root).pack(fill="both", expand=True)
+        root.mainloop()
     except Exception:
         print(traceback.format_exc())
         sys.exit(1)

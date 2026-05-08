@@ -14,12 +14,15 @@ class FileLoader:
     在后台线程中加载 IBW 文件列表，完成后通过 schedule_fn 回调主线程。
 
     schedule_fn : 将函数调度到主线程执行的函数，典型用法为 widget.after(0, fn)。
+    reader_func : 读取单个文件的函数，签名 (file_path) → (x, y, y_norm, meta)。
+                  默认为 read_ibw_ups，可替换以支持其他格式。
     on_done     : callback(spectra, ok_count, bad_count, failures)
                   failures 为 [(file_path, error_str), ...]
     """
 
-    def __init__(self, schedule_fn):
+    def __init__(self, schedule_fn, reader_func=None):
         self._schedule = schedule_fn
+        self._reader = reader_func or read_ibw_ups
         self._cancel = threading.Event()
 
     def load(self, files, on_done):
@@ -42,7 +45,7 @@ class FileLoader:
             if self._cancel.is_set():
                 break
             try:
-                x, y, y_norm, meta = read_ibw_ups(fp)
+                x, y, y_norm, meta = self._reader(fp)
                 spectra.append({
                     "file": fp,
                     "dir": os.path.dirname(fp),

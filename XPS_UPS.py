@@ -13,7 +13,9 @@ import importlib.util
 # 本程序必须的库（包名与 pip 名一致）
 _REQUIRED_COMMON = ["numpy", "matplotlib", "pandas"]
 _REQUIRED_UPS = _REQUIRED_COMMON + ["igor2"]
-_REQUIRED_XPS = _REQUIRED_COMMON + ["scipy"]
+# DL 自动拟合：torch（首次安装 ~200 MB，CPU 版即可）+ lmfit
+_REQUIRED_XPS = _REQUIRED_COMMON + ["scipy", "torch", "lmfit"]
+_REQUIRED_ALL = sorted(set(_REQUIRED_UPS + _REQUIRED_XPS))
 
 
 def _ensure_deps(required):
@@ -46,26 +48,10 @@ def _ensure_deps(required):
 
 if __name__ == "__main__":
     try:
-        from mode_select import ModeSelectApp
-
-        selector = ModeSelectApp()
-        selector.mainloop()
-        mode = getattr(selector, "selected_mode", None)
-        if mode is None:
-            sys.exit(0)
-
-        if mode == "ups":
-            if not _ensure_deps(_REQUIRED_UPS):
-                sys.exit(1)
-            from app import UPSApp
-            UPSApp().mainloop()
-        elif mode == "xps":
-            if not _ensure_deps(_REQUIRED_XPS):
-                sys.exit(1)
-            from xps_app import XPSApp
-            XPSApp().mainloop()
-        else:
-            raise ValueError(f"Unknown mode: {mode}")
+        if not _ensure_deps(_REQUIRED_ALL):
+            sys.exit(1)
+        from main_app import MainApp
+        MainApp().mainloop()
     except TypeError as e:
         # 已知问题：igor2 0.5.x 在 Python 3.12 下导入/解析可能失败
         if sys.version_info >= (3, 12) and "Struct()" in str(e):
